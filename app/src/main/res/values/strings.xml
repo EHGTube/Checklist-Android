@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Checklist</string>
+    <string name="notification_channel_name">Checklist Reminders</string>
+    <string name="notification_channel_description">Reminders for your checklist items</string>
+</resources>
