@@ -52,6 +52,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.delay
 import android.util.Log
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -118,9 +119,11 @@ class MainActivity : ComponentActivity(), CoroutineScope by MainScope() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val name = getString(R.string.notification_channel_name)
             val descriptionText = getString(R.string.notification_channel_description)
-            val importance = NotificationManager.IMPORTANCE_DEFAULT
+            val importance = NotificationManager.IMPORTANCE_HIGH
             val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
                 description = descriptionText
+                enableVibration(true)
+                vibrationPattern = longArrayOf(1000, 1000, 1000, 1000)
             }
 
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -331,7 +334,44 @@ fun SwipeToDismiss(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AlarmButton(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .size(48.dp)
+            .clickable { onToggle(!enabled) }
+            .padding(8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        // The alarm icon
+        Icon(
+            imageVector = Icons.Default.Alarm,
+            contentDescription = if (enabled) "Notifications enabled" else "Notifications disabled",
+            tint = if (enabled) Color(0xFF4CAF50) else Color.Gray
+        )
+
+        // Diagonal line when disabled
+        if (!enabled) {
+            Canvas(modifier = Modifier.matchParentSize()) {
+                val path = Path().apply {
+                    moveTo(0f, 0f)
+                    lineTo(size.width, size.height)
+                }
+
+                drawPath(
+                    path = path,
+                    color = Color(0xFFE91E63),
+                    style = Stroke(width = 4f, cap = StrokeCap.Round)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun SwipeableChecklistItem(
     item: ChecklistItem,
@@ -340,21 +380,35 @@ fun SwipeableChecklistItem(
     onItemUndone: () -> Unit,
     onSettingsClicked: (ChecklistItem) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+
     val dismissState = rememberDismissState(
         confirmValueChange = { dismissValue ->
             when (dismissValue) {
                 DismissValue.DismissedToEnd -> {
-                    // Can only swipe right-to-left if item is marked complete
+                    // Right-to-left swipe (for marking as crossed out)
                     if (item.isMarkedComplete) {
+                        // If already marked complete, we treat this as an "undone" action
                         onItemUndone()
-                        false // Don't dismiss the item, just handle the action
                     } else {
-                        false // Don't allow dismiss if not marked complete
+                        // Otherwise, mark it as complete (crossed out)
+                        scope.launch {
+                            // Ensure notification is enabled
+                            if (!item.isCompleted) {
+                                onItemCompleted(true)
+                                delay(100) // Small delay to ensure notification state is set first
+                            }
+                            // Now toggle the marked state
+                            onItemCompleted(true) // Just in case
+                            onItemUndone() // This will update the marked complete state
+                        }
                     }
+                    false // Don't dismiss, just handle the action
                 }
                 DismissValue.DismissedToStart -> {
+                    // Left-to-right swipe (for deletion)
                     onItemDeleted()
-                    true
+                    true // Allow dismiss animation
                 }
                 else -> false
             }
@@ -365,20 +419,17 @@ fun SwipeableChecklistItem(
     val color by animateColorAsState(
         when (dismissState.targetValue) {
             DismissValue.Default -> MaterialTheme.colorScheme.surfaceVariant
-            DismissValue.DismissedToEnd -> Color(0xFF2196F3) // Blue for undo
+            DismissValue.DismissedToEnd -> if (item.isMarkedComplete)
+                Color(0xFF2196F3) // Blue for undo
+            else
+                Color(0xFF4CAF50) // Green for marking complete
             DismissValue.DismissedToStart -> Color(0xFFE91E63) // Red for delete
         },
         label = "background color"
     )
 
-    // Set up swipe directions based on item status
-    val directions = if (item.isMarkedComplete) {
-        // Can swipe both ways if marked complete
-        setOf(DismissDirection.StartToEnd, DismissDirection.EndToStart)
-    } else {
-        // Can only swipe to delete if not marked complete
-        setOf(DismissDirection.EndToStart)
-    }
+    // Set up swipe directions - allow both directions
+    val directions = setOf(DismissDirection.StartToEnd, DismissDirection.EndToStart)
 
     SwipeToDismiss(
         state = dismissState,
@@ -390,7 +441,10 @@ fun SwipeableChecklistItem(
                 DismissDirection.EndToStart -> Alignment.CenterEnd
             }
             val icon = when (direction) {
-                DismissDirection.StartToEnd -> Icons.Default.Refresh
+                DismissDirection.StartToEnd -> if (item.isMarkedComplete)
+                    Icons.Default.Refresh
+                else
+                    Icons.Default.Done
                 DismissDirection.EndToStart -> Icons.Default.Delete
             }
             val scale by animateFloatAsState(
@@ -408,7 +462,10 @@ fun SwipeableChecklistItem(
                 Icon(
                     imageVector = icon,
                     contentDescription = when (direction) {
-                        DismissDirection.StartToEnd -> "Undo completion"
+                        DismissDirection.StartToEnd -> if (item.isMarkedComplete)
+                            "Undo completion"
+                        else
+                            "Mark as completed"
                         DismissDirection.EndToStart -> "Delete item"
                     },
                     modifier = Modifier.scale(scale),
@@ -449,9 +506,10 @@ fun ChecklistItemContent(
                 .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Checkbox(
-                checked = item.isCompleted,
-                onCheckedChange = onCheckedChange
+            // Replace Checkbox with AlarmButton
+            AlarmButton(
+                enabled = item.isCompleted,
+                onToggle = onCheckedChange
             )
 
             Text(
@@ -463,7 +521,7 @@ fun ChecklistItemContent(
                     .padding(start = 8.dp)
             )
 
-            // Settings icon replacing the delete icon
+            // Settings icon
             IconButton(onClick = { showSettingsDialog = true }) {
                 Icon(
                     imageVector = Icons.Default.Settings,
@@ -761,23 +819,32 @@ fun ChecklistApp(
                     onItemUndone = {
                         if (item.isMarkedComplete) {
                             viewModel.updateItem(item.copy(
-                                isCompleted = false,
                                 isMarkedComplete = false
                             ))
 
-                            // Start notifications again if permission granted
-                            if (hasNotificationPermission) {
-                                scheduleNotification(context, item)
-                            } else {
-                                onNeedPermission()
+                            // Restart notifications if the alarm is still enabled
+                            if (item.isCompleted) {
+                                if (hasNotificationPermission) {
+                                    scheduleNotification(context, item)
+                                } else {
+                                    onNeedPermission()
+                                }
                             }
+                        } else {
+                            // If not marked complete, now we mark it as complete
+                            viewModel.updateItem(item.copy(
+                                isMarkedComplete = true
+                            ))
+
+                            // Cancel notifications since we're marking as complete
+                            cancelNotification(context, item.id)
                         }
                     },
                     onSettingsClicked = { updatedItem ->
                         viewModel.updateItem(updatedItem)
 
                         // If the item is completed, reschedule notifications with new settings
-                        if (updatedItem.isCompleted && hasNotificationPermission) {
+                        if (updatedItem.isCompleted && !updatedItem.isMarkedComplete && hasNotificationPermission) {
                             cancelNotification(context, updatedItem.id)
                             scheduleNotification(context, updatedItem)
                         } else if (updatedItem.isCompleted && !hasNotificationPermission) {
@@ -845,7 +912,7 @@ fun NotificationPermissionBanner(onRequestPermission: () -> Unit) {
     }
 }
 
-// Check for notification permissions before scheduling
+// Updated notification scheduling function
 fun scheduleNotification(context: Context, item: ChecklistItem) {
     // Only schedule if we have permission (double-check)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -875,7 +942,7 @@ fun scheduleNotification(context: Context, item: ChecklistItem) {
         .putInt("repeat_minute", item.repeatMinute)
         .build()
 
-    // For basic interval notifications (when item is checked but not completed)
+    // For basic interval notifications (when item has notifications enabled but not marked complete)
     if (item.isCompleted && !item.isMarkedComplete) {
         val intervalMinutes = if (item.notificationIntervalMinutes > 0) item.notificationIntervalMinutes else 10
 
@@ -886,47 +953,53 @@ fun scheduleNotification(context: Context, item: ChecklistItem) {
             intervalMinutes.toLong(), TimeUnit.MINUTES
         )
             .setInputData(inputData)
-            .setInitialDelay(1, TimeUnit.MINUTES) // Changed to 1 minute for faster testing
+            .setInitialDelay(1, TimeUnit.MINUTES)
             .addTag("notification_${item.id}")
             .build()
 
-        // Enqueue the work
+        // Enqueue the work with REPLACE policy to ensure we don't have multiple workers
         workManager.enqueueUniquePeriodicWork(
             "notification_${item.id}",
             ExistingPeriodicWorkPolicy.REPLACE,
             notificationWork
         )
 
-        Log.d("ChecklistApp", "Work enqueued successfully")
-    } else {
-        Log.d("ChecklistApp", "Not scheduling notification - item is marked complete or not completed")
+        Log.d("ChecklistApp", "Periodic work enqueued successfully")
     }
 
     // For scheduled repeat notifications (based on repeat type)
     if (item.repeatType != RepeatType.NONE) {
-        Log.d("ChecklistApp", "Schedule type notification: ${item.repeatType}")
-        // Schedule a one-time notification for testing
-        val onceWork = OneTimeWorkRequestBuilder<NotificationWorker>()
+        Log.d("ChecklistApp", "Scheduling ${item.repeatType} notification at ${item.repeatHour}:${item.repeatMinute}")
+
+        // Create a one-time worker for immediate testing/feedback
+        val immediateWork = OneTimeWorkRequestBuilder<NotificationWorker>()
             .setInputData(inputData)
-            .setInitialDelay(1, TimeUnit.MINUTES)
-            .addTag("notification_once_${item.id}")
+            .setInitialDelay(10, TimeUnit.SECONDS) // Show a test notification quickly
+            .addTag("notification_immediate_${item.id}")
             .build()
 
         workManager.enqueueUniqueWork(
-            "notification_once_${item.id}",
+            "notification_immediate_${item.id}",
             ExistingWorkPolicy.REPLACE,
-            onceWork
+            immediateWork
         )
-
-        Log.d("ChecklistApp", "One-time testing notification scheduled")
     }
 }
 
+// Updated function to cancel notifications
 private fun cancelNotification(context: Context, itemId: Int) {
     val workManager = WorkManager.getInstance(context)
-    workManager.cancelAllWorkByTag("notification_$itemId")
-    workManager.cancelAllWorkByTag("notification_once_$itemId")
-    Log.d("ChecklistApp", "Cancelled existing notifications for item $itemId")
+
+    // Cancel all notification work for this item
+    workManager.cancelAllWorkByTag("notification_${itemId}")
+    workManager.cancelAllWorkByTag("notification_immediate_${itemId}")
+    workManager.cancelAllWorkByTag("notification_once_${itemId}")
+
+    // Also cancel any active notifications
+    val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    notificationManager.cancel(itemId)
+
+    Log.d("ChecklistApp", "Cancelled all notifications for item $itemId")
 }
 
 @Composable
@@ -949,10 +1022,10 @@ fun AddNewItemRow(onAddItem: (String) -> Unit) {
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Checkbox(
-                    checked = false,
-                    onCheckedChange = { /* Not needed for new item */ },
-                    enabled = false
+                // Use a grayed-out AlarmButton for consistency with other items
+                AlarmButton(
+                    enabled = false,
+                    onToggle = { /* Not functional for new items */ }
                 )
 
                 TextField(
@@ -1007,7 +1080,7 @@ fun AddNewItemRow(onAddItem: (String) -> Unit) {
                     .padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier = Modifier.width(12.dp)) // Space for checkbox
+                Spacer(modifier = Modifier.width(12.dp)) // Space for alarm icon
 
                 Text(
                     text = "Add new item...",

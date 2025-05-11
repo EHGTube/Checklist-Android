@@ -25,10 +25,11 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                     notificationManager.cancel(itemId)
 
-                    // Cancel future notifications
+                    // Cancel future notifications - make sure to cancel all types of notifications
                     val workManager = WorkManager.getInstance(context)
                     workManager.cancelAllWorkByTag("notification_$itemId")
                     workManager.cancelAllWorkByTag("notification_once_$itemId")
+                    workManager.cancelAllWorkByTag("notification_immediate_$itemId")
 
                     // Update the item in database to be marked as completed
                     CoroutineScope(Dispatchers.IO).launch {
@@ -37,8 +38,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
                             val item = dao.getItemById(itemId)
                             if (item != null) {
                                 Log.d(TAG, "Marking item as completed: $item")
+                                // Keep the notification enabled but mark it as visually complete
                                 item.isCompleted = true
-                                item.isMarkedComplete = true // New field to track items completed via notification
+                                item.isMarkedComplete = true
                                 dao.update(item)
                                 Log.d(TAG, "Item updated successfully")
                             } else {

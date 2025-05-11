@@ -1,9 +1,11 @@
 package com.example.checklist
 
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.Worker
@@ -31,17 +33,14 @@ class NotificationWorker(
 
         Log.d(TAG, "Notification settings: repeatType=$repeatType, time=$repeatHour:$repeatMinute")
 
-        // Check if we should display the notification based on repeat type
-        val shouldDisplay = true // Always display for now
-
-        if (shouldDisplay) {
+        try {
             // Send notification
             sendNotification(itemId, itemText, repeatType)
             Log.d(TAG, "Notification sent for item $itemId")
             return Result.success()
-        } else {
-            Log.d(TAG, "Notification skipped for item $itemId")
-            return Result.success()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending notification", e)
+            return Result.failure()
         }
     }
 
@@ -51,6 +50,21 @@ class NotificationWorker(
         repeatType: RepeatType
     ) {
         try {
+            // Ensure notification channel exists
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val name = "Checklist Reminders"
+                val descriptionText = "Reminders for your checklist items"
+                val importance = NotificationManager.IMPORTANCE_HIGH
+                val channel = NotificationChannel(MainActivity.NOTIFICATION_CHANNEL_ID, name, importance).apply {
+                    description = descriptionText
+                    enableVibration(true)
+                    vibrationPattern = longArrayOf(1000, 1000, 1000, 1000)
+                }
+
+                val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notificationManager.createNotificationChannel(channel)
+            }
+
             // Create intent for opening the app
             val mainIntent = Intent(applicationContext, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
@@ -92,12 +106,12 @@ class NotificationWorker(
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(itemText)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setPriority(NotificationCompat.PRIORITY_HIGH) // Increased priority
                 .setContentIntent(pendingMainIntent)
                 .setAutoCancel(true)
-                // Add the complete action button
+                .setVibrate(longArrayOf(1000, 1000, 1000, 1000)) // Add vibration pattern
                 .addAction(
-                    R.drawable.ic_done, // Use a checkmark icon for the action
+                    R.drawable.ic_done,
                     "Mark as completed",
                     pendingCompleteIntent
                 )
@@ -108,6 +122,7 @@ class NotificationWorker(
             Log.d(TAG, "Notification built and sent to system")
         } catch (e: Exception) {
             Log.e(TAG, "Error sending notification", e)
+            throw e
         }
     }
 
